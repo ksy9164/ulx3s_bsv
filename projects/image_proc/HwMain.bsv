@@ -26,16 +26,12 @@ module mkHwMain#(Ulx3sSdramUserIfc mem) (HwMainIfc);
 	FIFO#(Bit#(8)) serialrxQ <- mkFIFO;
 	FIFO#(Bit#(8)) serialtxQ <- mkFIFO;
 
-	Vector#(2, FIFO#(Bit#(8))) r_bufQ <- replicateM(mkSizedBRAMFIFO(1024));
-	Vector#(2, FIFO#(Bit#(8))) c_bufQ <- replicateM(mkSizedBRAMFIFO(1024));
-
-	//Vector#(2, FIFO#(Bit#(8))) r_bufQ <- replicateM(mkFIFO);
-	//Vector#(2, FIFO#(Bit#(8))) c_bufQ <- replicateM(mkFIFO);
+	Vector#(2, FIFO#(Bit#(8))) r_bufQ <- replicateM(mkSizedBRAMFIFO(512));
+	Vector#(2, FIFO#(Bit#(8))) c_bufQ <- replicateM(mkSizedBRAMFIFO(512));
 
 	Vector#(2, FIFO#(Bit#(8))) r_resQ <- replicateM(mkFIFO);
 	Vector#(2, FIFO#(Bit#(8))) c_resQ <- replicateM(mkFIFO);
 
-	//Vector#(2, FIFO#(Bit#(8))) merge_Q <- replicateM(mkSizedBRAMFIFO(512));
 	Vector#(2, FIFO#(Bit#(8))) merge_Q <- replicateM(mkFIFO);
 
 	Vector#(2,Reg#(Bit#(32))) r_cnt <- replicateM(mkReg(0));
@@ -46,9 +42,8 @@ module mkHwMain#(Ulx3sSdramUserIfc mem) (HwMainIfc);
 	FIFO#(Bit#(8)) r_startQ <- mkFIFO;
 	FIFO#(Bit#(8)) c_startQ <- mkFIFO;
 
-	//FIFO#(Bit#(8)) r_startQ <- replicateM(mkSizedBRAMFIFO(1024));
-	//FIFO#(Bit#(8)) c_startQ <- replicateM(mkSizedBRAMFIFO(1024));
-	
+	Vector#(2, Reg#(Bit#(32))) si_cnt <- replicateM(mkReg(0));
+
 	Vector#(2,Reg#(Bit#(32))) q_cnt <- replicateM(mkReg(0));
 
 	rule relayStart;
@@ -72,20 +67,20 @@ module mkHwMain#(Ulx3sSdramUserIfc mem) (HwMainIfc);
 		r_cnt[0] <= r_cnt[0] + 1;
 		if (r_cnt[0] / 512 == 0) begin
 			r_resQ[0].enq(0);
-		end else if (r_cnt[0] / 512 != 256) begin
+		end else if (r_cnt[0] / 512 != 257) begin
 			r_bufQ[0].deq;
 			r_resQ[0].enq(r_bufQ[0].first);
 		end
 	endrule
 	rule row_manage_lower;
 		r_cnt[1] <= r_cnt[1] + 1;
-		if (r_cnt[1] / 512 == 0) begin
-			r_bufQ[1].deq;
-		end else if (r_cnt[0] / 512 != 256) begin
+		if (r_cnt[0] / 512 != 257) begin
 			r_bufQ[1].deq;
 			r_resQ[1].enq(r_bufQ[1].first);
-		end else begin
+		end else if (r_cnt[1] / 512 == 257) begin
 			r_resQ[1].enq(0);
+		end else begin
+			r_bufQ[1].deq;
 		end
 	endrule
 	rule row_res;
@@ -94,19 +89,19 @@ module mkHwMain#(Ulx3sSdramUserIfc mem) (HwMainIfc);
 		let d1 = r_resQ[0].first;
 		let d2 = r_resQ[1].first;
 		merge_Q[0].enq(d1 + d2);
-		//q_cnt[0] <= q_cnt[0] + 1;
 	endrule
 
 
 	rule col_run;
 		c_startQ.deq;
 		let d = c_startQ.first;
-
 		c_bufQ[0].enq(d * -1);
 		c_bufQ[1].enq(d);
+
 	endrule
 	rule col_manage_left;
-	/*	c_cnt[0] <= c_cnt[0] + 1;
+		c_cnt[0] <= c_cnt[0] + 1;
+
 		if (c_cnt[0] % 513 == 0) begin
 			c_resQ[0].enq(0);
 		end else if (c_cnt[0] % 513 != 512) begin
@@ -114,13 +109,11 @@ module mkHwMain#(Ulx3sSdramUserIfc mem) (HwMainIfc);
 			c_resQ[0].enq(c_bufQ[0].first);
 		end else begin
 			c_bufQ[0].deq;
-		end */
-			c_bufQ[0].deq;
-			c_resQ[0].enq(c_bufQ[0].first);
+		end 
 	endrule
 	rule col_manage_right;
 		c_cnt[1] <= c_cnt[1] + 1;
-/*
+
 		if (c_cnt[1] % 513 == 0) begin
 			c_bufQ[1].deq;
 		end else if (c_cnt[1] % 513 != 512) begin
@@ -129,9 +122,7 @@ module mkHwMain#(Ulx3sSdramUserIfc mem) (HwMainIfc);
 		end else begin
 			c_resQ[1].enq(0);
 		end
-*/
-			c_bufQ[1].deq;
-			c_resQ[1].enq(c_bufQ[1].first);
+
 	endrule
 	rule col_res;
 		c_resQ[0].deq;
@@ -145,9 +136,9 @@ module mkHwMain#(Ulx3sSdramUserIfc mem) (HwMainIfc);
 	rule merge;
 		merge_Q[0].deq;
 		merge_Q[1].deq;
-		//serialtxQ.enq((merge_Q[0].first + merge_Q[1].first) / 2);
+		serialtxQ.enq((merge_Q[0].first + merge_Q[1].first) / 2);
 		qc <= qc + 1;
-		//$display("Cycle %d ", qc);
+		$display("Cycle %d ", qc);
 	endrule
 
 	Reg#(Bit#(32)) pixOutCnt <- mkReg(0);
